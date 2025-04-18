@@ -197,6 +197,7 @@ class ModuleInfo { // 在 TinyInst::OnInstrumentModuleLoaded(...) 中被赋值
 ### [实现原理分析](https://paper.seebug.org/3053/?comefrom=https://blogread.cn/news/)
 
 - [TinyInst动态插桩工具原理分析](https://www.anquanke.com/post/id/234925#h2-3)
+  - [Conf_pdf](https://github.com/AlexNiculae/PoCxZer0Con-TinyInst-Slides)
 - 拷贝要插桩的 module 的代码，并将原始代码内存属性设为 protected
 - 为插桩后的代码分配空间
 
