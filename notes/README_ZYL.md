@@ -32,10 +32,56 @@
     - 地址空间布局随机化（ASLR）导致基址偏移，但保持内部相对连续性
     - 基于硬件的SMAP/SMEP防护可能强制插入隔离页
     - 增量链接（Incremental Linking）生成的填充间隙
-- 跳转/调用
-  - 近跳转: 模块(module) 内部调用: 调用模块内部函数
-  - 远跳转: 模块(module) 外部调用: 调用模块外部函数, 比如其它 DLL 中的函数
+- intel_x64
+  ```c++
+  // vs2022 Debug/X64
+  #include<stdio.h>
+  #include<windows.h>
 
+  int add(int a, int b) {
+      return a + b;
+  }
+
+  int main(int argc, char *argv[])
+  {
+      int real_a = 3;
+      int real_b = 4;
+      
+      int result = 0;
+      result = add(real_a, real_b);
+      printf("result is %d\n", result);
+      ::MessageBoxA(NULL, "text", "caption", MB_OK);
+      return 0;
+  }
+  ```
+  - ![near_far_call](/notes/images/near_far_call.png)
+  - 跳转/调用
+    - 近跳转:
+      - 模块(module) 内部调用: 调用模块内部函数
+      - `call` 对应的编码是 `E8`
+      - `call rip + offset` offset 是相对于 `rip` 的， 可正可负, 4字节
+    - 远跳转: 模块(module) 外部调用: 调用模块外部函数, 比如其它 DLL 中的函数
+      - `call` 对应的编码是 `FF 15`
+      - `call [rip + offset]`
+    - 直接跳转:
+      - 一般是直接函数调用
+    - 间接跳转:
+      - 一般是函数指针调用
+  - 寻址
+    - 直接寻址
+    - 间接寻址
+      - 指针
+        - 函数指针
+          - 内部函数
+            - 在插桩模块内，代码段(.text)
+          - 外部函数
+            - 不在插桩模块内，代码段(.text)
+        - c++ 虚函数
+        - DLL 外部函数, IAT
+        - 变量指针
+          - 内部/外部变量，不在代码段(.data)
+        - 二级指针(多级指针)
+    - 相对(直接/间接)偏移
 - Win APIs
 
 ```c++
@@ -103,11 +149,44 @@ class ModuleInfo { // 在 TinyInst::OnInstrumentModuleLoaded(...) 中被赋值
   size_t min_address;  // Debugger::GetImageSize(...) 中被赋值, 保存的是 module_header 的值
   size_t max_address;  // max_address = min_address + SizeOfImage
   size_t code_size;    // module 所有的代码字节数的总和
-  bool loaded;
-  bool instrumented;
+  bool loaded;         // 是否被加载
+  bool instrumented;   // 是否被插桩(本地和远程的空间是否都分配了)
   std::list<AddressRange> executable_ranges;
-  // ...
-}
+
+  size_t instrumented_code_size; // instrumented_code_size = code_size * CODE_SIZE_MULTIPLIER + child_ptr_size * JUMPTABLE_SIZE
+  size_t instrumented_code_allocated; // 记录当前插桩代码的位置(在远程空间)
+  char *instrumented_code_local;  // 为模块代码在本地分配的空间
+  char *instrumented_code_remote; // 为模块代码在远程分配的空间
+  char *instrumented_code_remote_previous; // 目前没起到作用
+
+  std::unordered_map<uint32_t, uint32_t> basic_blocks; // <原始bb_entry的offset, 插桩后bb_entry的offset>
+
+  // `-full_address_map` - Maintains an instruction-level map; 消耗大量内存，但是对调试有帮助
+  std::map<size_t, size_t> address_map; // <key, value> = <instrumented address, original address>
+
+  size_t br_indirect_newtarget_global;
+
+  // per callsite jumplist breakpoint
+  // from breakpoint address to list head offset
+  std::unordered_map<size_t, IndirectBreakpoinInfo> br_indirect_newtarget_list;
+
+  size_t jumptable_offset;
+  size_t jumptable_address_offset;
+
+  std::unordered_set<size_t> invalid_instructions;
+  std::unordered_map<size_t, size_t> outside_jumps;
+  std::unordered_map<size_t, size_t> tracepoints;
+
+  std::unordered_set<size_t> entry_offsets;
+
+  UnwindData *unwind_data;
+  
+  bool do_protect;
+
+  // clients can use this to store additional data
+  // about the module
+  void *client_data;
+};
 
 ```
 
@@ -117,9 +196,9 @@ class ModuleInfo { // 在 TinyInst::OnInstrumentModuleLoaded(...) 中被赋值
 
 ### [实现原理分析](https://paper.seebug.org/3053/?comefrom=https://blogread.cn/news/)
 
+- [TinyInst动态插桩工具原理分析](https://www.anquanke.com/post/id/234925#h2-3)
 - 拷贝要插桩的 module 的代码，并将原始代码内存属性设为 protected
 - 为插桩后的代码分配空间
-
 
 ## Coverage
 
